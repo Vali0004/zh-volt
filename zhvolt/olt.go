@@ -22,7 +22,7 @@ type ONU struct {
 	RxPower    float64        `json:"rx_power"`
 	Voltage    uint64         `json:"voltage"`
 	Current    uint64         `json:"current"`
-	Temp       uint64         `json:"temperature"`
+	Temp       float32        `json:"temperature"`
 }
 
 type Olt struct {
@@ -59,7 +59,7 @@ func (olt *Olt) SendPktFn(pkt packet.Packet, fn RequestCallback) error {
 	return olt.parent.SendRequestPacketCall(pkt, false, fn)
 }
 
-func (olt *Olt) Onu() {
+func (olt *Olt) Start() {
 	olt.SendPkt(packet.Packet{Type: 0x000c, Flag1: 0x10, Flag2: 0xff})
 	olt.SendPktFn(packet.Packet{Type: 0x000c, Flag1: 0x03, Flag2: 0xff}, func(pkt packet.Packet, olt *Olt) {})
 
@@ -78,42 +78,56 @@ func (olt *Olt) Onu() {
 					if onu.Status == 0 {
 						olt.Log.Printf("ONU Online SN: %s", onu.SN)
 					}
-					onu.Status = 1
 				case gponsn.ErrVendorName:
-					olt.SendPktFn(packet.Packet{Type: 0x000c, Status: 0x00, Flag0: 0x02, Flag1: 0x06, Flag2: onu.ID}, process)
+					olt.SendPktFn(packet.Packet{Type: 0x000c, Flag0: 0x02, Flag1: 0x06, Flag2: onu.ID}, process)
 					return
 				case gponsn.ErrNullSn:
 					olt.Log.Printf("onu %d: %s", onu.ID, hex.EncodeToString(pkt.Data))
 					if onu.Status >= 1 {
 						olt.Log.Printf("ONU %d update to offline", onu.ID)
 					}
-					onu.Status = 0
-					olt.SendPktFn(packet.Packet{Type: 0x000c, Status: 0x00, Flag0: 0x02, Flag1: 0x06, Flag2: onu.ID}, process)
+					olt.SendPktFn(packet.Packet{Type: 0x000c, Flag0: 0x02, Flag1: 0x06, Flag2: onu.ID}, process)
 					return
 				default:
 					olt.Log.Printf("ONU Error %d: %s", onu.ID, err)
-					olt.SendPktFn(packet.Packet{Type: 0x000c, Status: 0x00, Flag0: 0x02, Flag1: 0x06, Flag2: onu.ID}, process)
+					olt.SendPktFn(packet.Packet{Type: 0x000c, Flag0: 0x02, Flag1: 0x06, Flag2: onu.ID}, process)
 					return
 				}
 
-				olt.SendPktFn(packet.Packet{Type: 0x000c, Flag0: 0x02, Flag1: 0x02, Flag2: onu.ID}, func(pkt packet.Packet, olt *Olt) {
+				olt.SendPktFn(packet.Packet{Type: 0x000c, Flag0: 0x02, Flag1: 0x01, Flag2: onu.ID}, func(pkt packet.Packet, olt *Olt) {
 					// Ignore
+					// olt.Log.Printf("ONU %d, data 1: %s", onu.ID, hex.EncodeToString(pkt.Data))
+					onu.Status = ONUStatus(pkt.Data[0])
+				})
 
-					olt.SendPktFn(packet.Packet{Type: 0x000c, Flag0: 0x02, Flag1: 0x10, Flag2: uint8(onu.ID)}, func(pkt packet.Packet, olt *Olt) {
-						lastUpdate := binary.BigEndian.Uint32(pkt.Data[2:6])
-						onu.LastUpdate = olt.Up.Add(time.Duration(lastUpdate))
+				olt.SendPktFn(packet.Packet{Type: 0x000c, Flag0: 0x02, Flag1: 0x0c, Flag2: onu.ID}, func(pkt packet.Packet, olt *Olt) {
+					onu.Temp = float32(binary.BigEndian.Uint32(pkt.Data)) / 890
+				})
+				olt.SendPktFn(packet.Packet{Type: 0x000c, Flag0: 0x02, Flag1: 0x05, Flag2: onu.ID}, func(pkt packet.Packet, olt *Olt) {
+					onu.RxPower = float64(binary.BigEndian.Uint16(pkt.Data)) / 450
+				})
 
-						olt.SendPktFn(packet.Packet{Type: 0x000c, Status: 0x0, Flag0: 0x2, Flag1: 0x03, Flag2: onu.ID}, func(pkt packet.Packet, olt *Olt) {
-							olt.Log.Printf("ONU %d: %s", onu.SN, hex.EncodeToString(pkt.Data))
-						})
-						olt.SendPktFn(packet.Packet{Type: 0x000c, Status: 0x0, Flag0: 0x2, Flag1: 0x0d, Flag2: onu.ID}, func(pkt packet.Packet, olt *Olt) {})
+				olt.SendPktFn(packet.Packet{Type: 0x000c, Flag0: 0x02, Flag1: 0x07, Flag2: onu.ID}, func(pkt packet.Packet, olt *Olt) {
+					// olt.Log.Printf("ONU %d, data 2: %s", onu.ID, hex.EncodeToString(pkt.Data))
+				})
+				olt.SendPktFn(packet.Packet{Type: 0x000c, Flag0: 0x02, Flag1: 0x0f, Flag2: onu.ID}, func(pkt packet.Packet, olt *Olt) {
+					// data := pkt.Data[:9]
+				})
+				
+				olt.SendPktFn(packet.Packet{Type: 0x000c, Flag0: 0x02, Flag1: 0x10, Flag2: uint8(onu.ID)}, func(pkt packet.Packet, olt *Olt) {
+					lastUpdate := binary.BigEndian.Uint32(pkt.Data[2:6])
+					onu.LastUpdate = olt.Up.Add(time.Duration(lastUpdate))
 
-						// <-time.After(time.Microsecond * 500)
-						// Send again
-						olt.SendPktFn(packet.Packet{Type: 0x000c, Status: 0x00, Flag0: 0x02, Flag1: 0x06, Flag2: onu.ID}, process)
-					})
+					olt.SendPktFn(packet.Packet{Type: 0x000c, Status: 0x0, Flag0: 0x2, Flag1: 0x03, Flag2: onu.ID}, func(pkt packet.Packet, olt *Olt) {})
+					olt.SendPktFn(packet.Packet{Type: 0x000c, Status: 0x0, Flag0: 0x2, Flag1: 0x0d, Flag2: onu.ID}, func(pkt packet.Packet, olt *Olt) {})
+
+					// Send again
+					<-time.After(time.Microsecond * 300)
+					olt.SendPktFn(packet.Packet{Type: 0x000c, Status: 0x00, Flag0: 0x02, Flag1: 0x06, Flag2: onu.ID}, process)
 				})
 			}
+
+			// Start
 			olt.SendPktFn(packet.Packet{Type: 0x000c, Status: 0x00, Flag0: 0x02, Flag1: 0x06, Flag2: onu.ID}, process)
 		}
 	})
@@ -136,12 +150,12 @@ func (olt *Olt) Onu() {
 			})
 		})
 
-		<-time.After(time.Millisecond * 300)
+		<-time.After(time.Second * 3)
 	}
 }
 
 func (olt *Olt) ProcessPkt(pkt packet.Packet) {
-	if data, err := json.MarshalIndent(pkt, "", "  "); err == nil {
+	if data, err := json.Marshal(pkt); err == nil {
 		olt.Log.Printf("No processed pkt: %s", string(data))
 	}
 }

@@ -23,7 +23,7 @@ var broadcastMAC = packet.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 const (
 	MaxOnu = 128
 
-	defaultLogFlag = log.Ldate | log.Ltime | log.LUTC | log.Lmicroseconds | log.Lmsgprefix
+	defaultLogFlag = log.Ldate | log.Ltime | log.LUTC | log.Lmsgprefix
 )
 
 // Run callbacks on return response
@@ -38,9 +38,8 @@ type Maneger struct {
 	source  sources.Sources
 	newDev  chan struct{}
 
-	oltsSync *sync.RWMutex
-	olts     map[string]*Olt
-
+	oltsSync                  *sync.RWMutex
+	olts                      map[string]*Olt
 	reqCallbacks, initRequest *sync.Map
 }
 
@@ -119,9 +118,15 @@ func (maneger *Maneger) getOlt(mac packet.HardwareAddr) (*Olt, bool) {
 
 func (maneger *Maneger) processPackets() {
 	defer maneger.Close()
+	done := maneger.context.Done()
 	for sourceData, err := range maneger.source.GetPacketData() {
-		if err != nil {
+		select {
+		case <-done:
 			return
+		default:
+			if err != nil {
+				return
+			}
 		}
 
 		var pkt packet.Packet
@@ -194,7 +199,6 @@ func NewOltProcess(source sources.Sources, logWrite io.Writer, ctx context.Conte
 		olt.FirmwareVersion = strings.TrimFunc(string(pkt.Data), func(r rune) bool {
 			return unicode.IsSpace(r) || r == 0x0
 		})
-
 	})
 
 	maneger.SendPktBroadcastFn(packet.Packet{Type: 0x000c, Flag0: 0x01, Flag1: 0x18, Flag2: 0xff}, func(pkt packet.Packet, olt *Olt) {
@@ -244,7 +248,7 @@ func NewOltProcess(source sources.Sources, logWrite io.Writer, ctx context.Conte
 	maneger.SendPktBroadcastFn(packet.Packet{Type: 0x000c, Flag0: 0x02, Flag1: 0x01, Flag2: 0x00}, func(pkt packet.Packet, olt *Olt) {})
 	maneger.SendPktBroadcastFn(packet.Packet{Type: 0x000f, Flag1: 0x09, Flag2: 0xff}, func(pkt packet.Packet, olt *Olt) {
 		olt.Log.Printf("OLT Data: %s", hex.EncodeToString(pkt.Data))
-		olt.Onu()
+		olt.Start()
 	})
 
 	firstTimeout := time.Second * 5

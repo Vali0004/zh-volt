@@ -2,7 +2,6 @@
 local olt_proto = Proto("olt", "Custom OLT Protocol")
 
 -- Define os campos do cabeçalho com base na struct Packet (sources/packet.go)
-local f_magic   = ProtoField.bytes("olt.magic", "Magic", base.SPACE)
 local f_request = ProtoField.uint16("olt.request", "Request ID", base.DEC)
 local f_type    = ProtoField.uint16("olt.type", "Type", base.HEX)
 local f_flag3   = ProtoField.uint8("olt.flag3", "Flag 3 (Old Status)", base.HEX)
@@ -15,7 +14,7 @@ local f_calc_id = ProtoField.uint16("olt.calc_id", "Calculated ID", base.DEC)
 local f_data    = ProtoField.bytes("olt.data", "Data Payload", base.SPACE)
 
 -- Registra os campos no protocolo
-olt_proto.fields = { f_magic, f_request, f_type, f_flag3, f_flag0, f_flag1, f_flag2, f_calc_id, f_data }
+olt_proto.fields = { f_request, f_type, f_flag3, f_flag0, f_flag1, f_flag2, f_calc_id, f_data }
 
 -- Função principal do Dissector
 function olt_proto.dissector(buffer, pinfo, tree)
@@ -38,7 +37,6 @@ function olt_proto.dissector(buffer, pinfo, tree)
     local subtree = tree:add(olt_proto, buffer(), "OLT Protocol Data")
 
     -- Adiciona os campos seguindo a ordem de UnmarshalBinary
-    subtree:add(f_magic, buffer(0, 4))
     subtree:add(f_request, buffer(4, 2))
 
     local type_val = buffer(6, 2):uint()

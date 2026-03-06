@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 
 	"sirherobrine23.com.br/Sirherobrine23/zh-volt/olt"
 )
@@ -19,7 +20,7 @@ func NewPage(maneger *olt.OltManeger) *http.ServeMux {
 	pageRoute.HandleFunc("GET /_update/{onuMAC}", func(w http.ResponseWriter, r *http.Request) {
 		pg, err := GetPages()
 		if err != nil {
-			maneger.Log.Printf("error on render page: %s\n", err)
+			fmt.Fprintf(os.Stderr, "error on render page: %s\n", err)
 			w.Header().Set("Content-Type", "text/plain; utf-8")
 			w.WriteHeader(500)
 			fmt.Fprintf(w, "error on render page: %s\n\n", err)
@@ -35,10 +36,10 @@ func NewPage(maneger *olt.OltManeger) *http.ServeMux {
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache, private");
+		w.Header().Set("Cache-Control", "no-cache, private")
 		err = pg.Render("olt.tmpl", w, olt)
 		if err != nil {
-			maneger.Log.Printf("error on render page: %s\n", err)
+			fmt.Fprintf(os.Stderr, "error on render page: %s\n", err)
 			w.Header().Set("Content-Type", "text/plain; utf-8")
 			w.WriteHeader(500)
 			fmt.Fprintf(w, "error on render page: %s\n\n", err)
@@ -47,7 +48,7 @@ func NewPage(maneger *olt.OltManeger) *http.ServeMux {
 
 	pageRoute.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache, private");
+		w.Header().Set("Cache-Control", "no-cache, private")
 
 		err := RenderPage(w, &Page{
 			PageBody: "home.tmpl",
@@ -55,7 +56,7 @@ func NewPage(maneger *olt.OltManeger) *http.ServeMux {
 			Data:     maneger.Olts(),
 		})
 		if err != nil {
-			maneger.Log.Printf("error on render page: %s\n", err)
+			fmt.Fprintf(os.Stderr, "error on render page: %s\n", err)
 			w.Header().Set("Content-Type", "text/plain; utf-8")
 			w.WriteHeader(500)
 			fmt.Fprintf(w, "error on render page: %s\n\n", err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -47,16 +48,10 @@ var app = &cli.Command{
 					Aliases: []string{"L"},
 					Value:   "-",
 				},
-				&cli.Uint8Flag{
+				&cli.Int8Flag{
 					Name:    "verbose-level",
 					Aliases: []string{"v"},
-					Value:   1,
-					Validator: func(u uint8) error {
-						if u > 0 && u <= 7 {
-							return nil
-						}
-						return fmt.Errorf("verbose valid in range 1~7, u set %d", u)
-					},
+					Value:   int8(slog.LevelError),
 				},
 			},
 
@@ -86,11 +81,10 @@ var app = &cli.Command{
 					}
 				}
 
-				olts, err := zhvolt.NewOltProcess(ctx, pcapSource, logPrint)
+				olts, err := zhvolt.NewOltProcess(ctx, pcapSource, slog.Level(c.Int8("verbose-level")), logPrint)
 				if err != nil {
 					return fmt.Errorf("cannot create olt process: %s", err)
 				}
-				olts.Verbose = c.Uint8("verbose-level")
 
 				if port := c.Uint16("http-port"); port > 0 {
 					tcp, err := net.Listen("tcp", fmt.Sprintf(":%d", port))

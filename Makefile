@@ -3,7 +3,7 @@ NETDEV ?= eth0
 VERBOSE ?= 7
 
 build:
-	go build -o $(FINAL_FILE) .
+	go build -v -o $(FINAL_FILE) .
 
 clean:
 	rm -f $(FINAL_FILE)

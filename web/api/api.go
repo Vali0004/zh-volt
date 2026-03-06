@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 
 	"sirherobrine23.com.br/Sirherobrine23/zh-volt/olt"
 )
@@ -17,7 +18,7 @@ func NewApi(maneger *olt.OltManeger) *http.ServeMux {
 		js := json.NewEncoder(w)
 		js.SetIndent("", "  ")
 		if err := js.Encode(data); err != nil {
-			maneger.Log.Printf("error on encode olt: %s\n", err)
+			fmt.Fprintf(os.Stderr, "error on encode olt: %s\n", err)
 			w.Header().Set("Content-Type", "text/plain; utf-8")
 			w.WriteHeader(500)
 			fmt.Fprintf(w, "error on encode olt data: %s\n\n", err)

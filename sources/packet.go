@@ -48,16 +48,18 @@ type Packet struct {
 	Flag2       uint8  `json:"flag2"`
 	Flag3       uint8  `json:"flag3"` // Old `Status` flag
 
-	Header []byte `json:"-"`
-	Data   []byte `json:"data"`
+	Error  error        `json:"error"`
+	Mac    HardwareAddr `json:"mac"`
+	Header []byte       `json:"-"`
+	Data   []byte       `json:"data"`
 }
 
 func IsOltPacket(raw []byte) bool {
 	return bytes.HasPrefix(raw, OltMagic)
 }
 
-func Parse(data []byte) (*Packet, error) {
-	pkt := &Packet{}
+func Parse[K HardwareAddr | net.HardwareAddr](mac K, data []byte) (*Packet, error) {
+	pkt := &Packet{Mac: HardwareAddr(mac)}
 	return pkt, pkt.UnmarshalBinary(data)
 }
 
@@ -83,7 +85,7 @@ func (pkt *Packet) UnmarshalBinary(raw []byte) error {
 	return ErrNoMagic
 }
 
-func (pkt Packet) MarshalBinary() ([]byte, error) {
+func (pkt Packet) Encode() []byte {
 	header := make([]byte, len(OltMagic), 50)
 	copy(header, OltMagic)
 	header = binary.BigEndian.AppendUint16(header, pkt.RequestID)
@@ -94,13 +96,72 @@ func (pkt Packet) MarshalBinary() ([]byte, error) {
 		copy(header[len(header):cap(header)], pkt.Data)
 	}
 
-	return header[:cap(header)], nil
+	return header[:cap(header)]
 }
 
+func (pkt Packet) MarshalBinary() ([]byte, error) { return pkt.Encode(), nil }
 func (pkt Packet) String() string {
-	return fmt.Sprintf("flag0: %02x, flag1: %02x, flag2: %02x, flag3: %02x", pkt.Flag0, pkt.Flag1, pkt.Flag2, pkt.Flag3)
+	return fmt.Sprintf("%02x-%02x-%02x-%02x", pkt.Flag0, pkt.Flag1, pkt.Flag2, pkt.Flag3)
 }
 
-func (pkt Packet) Id() int {
-	return int(pkt.RequestType)>>(int(pkt.Flag0)>>8) + (int(pkt.Flag1) | int(pkt.Flag2))
+// Return new Packet with Broadcast MAC Address
+func New() *Packet {
+	return &Packet{
+		Mac: bytes.Clone(BroadcastMAC),
+	}
+}
+
+func (pkt Packet) Clone() *Packet {
+	return &Packet{
+		RequestID:   pkt.RequestID,
+		RequestType: pkt.RequestType,
+		Flag0:       pkt.Flag0,
+		Flag1:       pkt.Flag1,
+		Flag2:       pkt.Flag2,
+		Flag3:       pkt.Flag3,
+
+		Error: pkt.Error,
+		Mac:   bytes.Clone(pkt.Mac),
+		Data:  bytes.Clone(pkt.Data),
+	}
+}
+
+func (pkt *Packet) SetMacAddr(mac HardwareAddr) *Packet {
+	pkt.Mac = bytes.Clone(mac)
+	return pkt
+}
+
+func (pkt *Packet) SetNetMacAddr(mac net.HardwareAddr) *Packet {
+	pkt.Mac = HardwareAddr(mac)
+	return pkt
+}
+
+func (pkt *Packet) SetRequestID(data uint16) *Packet {
+	pkt.RequestID = data
+	return pkt
+}
+
+func (pkt *Packet) SetRequestType(data uint16) *Packet {
+	pkt.RequestType = data
+	return pkt
+}
+
+func (pkt *Packet) SetFlag0(data uint8) *Packet {
+	pkt.Flag0 = data
+	return pkt
+}
+
+func (pkt *Packet) SetFlag1(data uint8) *Packet {
+	pkt.Flag1 = data
+	return pkt
+}
+
+func (pkt *Packet) SetFlag2(data uint8) *Packet {
+	pkt.Flag2 = data
+	return pkt
+}
+
+func (pkt *Packet) SetFlag3(data uint8) *Packet {
+	pkt.Flag3 = data
+	return pkt
 }

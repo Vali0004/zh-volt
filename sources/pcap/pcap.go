@@ -1,8 +1,11 @@
 package pcap
 
 import (
+	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net"
+	"runtime"
 	"sync"
 	"time"
 
@@ -10,6 +13,7 @@ import (
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 	"sirherobrine23.com.br/Sirherobrine23/zh-volt/sources"
+	"sirherobrine23.com.br/Sirherobrine23/zh-volt/util"
 )
 
 const (
@@ -30,9 +34,14 @@ type Pcap struct {
 	macNetDev sources.HardwareAddr
 
 	pcapPackets chan gopacket.Packet
-	returnPkts  chan *sources.PacketRaw
+	returnPkts  chan *sources.Packet
 	onceStart   *sync.Once
 
+	CorrentRequest uint16
+	reqLock        *sync.Mutex
+	fnCallbacks    *util.SyncMap[uint16, sources.ASyncFn]
+
+	log          *slog.Logger
 	pcapHandle   *pcap.Handle
 	packetSource *gopacket.PacketSource
 }
@@ -55,10 +64,15 @@ func New(ifaceName string) (sources.Sources, error) {
 
 	return &Pcap{
 		macNetDev: sources.HardwareAddr(macNetDev),
+		log:       slog.New(slog.DiscardHandler),
 
 		pcapPackets: packetSource.Packets(),
-		returnPkts:  make(chan *sources.PacketRaw, 5000),
+		returnPkts:  make(chan *sources.Packet, 5000),
 		onceStart:   &sync.Once{},
+
+		CorrentRequest: 0,
+		reqLock:        &sync.Mutex{},
+		fnCallbacks:    util.NewSyncMap[uint16, sources.ASyncFn](),
 
 		pcapHandle:   handle,
 		packetSource: packetSource,
@@ -84,55 +98,121 @@ func (pcap Pcap) MacAddr() sources.HardwareAddr {
 	return pcap.macNetDev
 }
 
-func (pcap *Pcap) GetPkts() <-chan *sources.PacketRaw {
+func (pcap *Pcap) Slog(log *slog.Logger) {
+	pcap.log = slog.New(log.Handler().WithAttrs([]slog.Attr{slog.String("sources", pcap.macNetDev.String())}))
+}
+
+func (pcap *Pcap) processResponses(workderID int) {
+	defer pcap.Close()
+	log := pcap.log.With("WorkderID_PCAP", workderID)
+
+	for pkt := range pcap.pcapPackets {
+		ethLayer := pkt.Layer(layers.LayerTypeEthernet)
+		if ethLayer == nil {
+			log.Debug("layer droped", "string", pkt.String())
+			continue
+		}
+
+		eth := ethLayer.(*layers.Ethernet)
+		log.Debug("ethernet packet", "Source MAC Addr", eth.SrcMAC.String(), "Destination MAC Addr", eth.DstMAC.String(), "Ethernet type", eth.EthernetType.String())
+		if eth.SrcMAC.String() == pcap.macNetDev.String() {
+			log.Debug("Ignoring own packets", "Source MAC Addr", eth.SrcMAC.String(), "Destination MAC Addr", eth.DstMAC.String(), "Ethernet type", eth.EthernetType.String())
+			continue
+		}
+
+		if !(eth.EthernetType == layers.EthernetType(EthernetOltType) && sources.IsOltPacket(eth.Payload)) {
+			log.Debug("Droping non-olt packet", "Source MAC Addr", eth.SrcMAC.String(), "Destination MAC Addr", eth.DstMAC.String(), "Ethernet type", eth.EthernetType.String(), "Payload", hex.EncodeToString(eth.Payload))
+			continue
+		}
+
+		pkt, err := sources.Parse(eth.SrcMAC, eth.Payload)
+		if pcap.returnPkts == nil {
+			return
+		}
+		pkt.Error = err
+		if fn, ok := pcap.fnCallbacks.Get(pkt.RequestID); err == nil && ok {
+			if fn(pkt) {
+				pcap.fnCallbacks.Del(pkt.RequestID)
+			}
+			continue
+		}
+		pcap.returnPkts <- pkt
+	}
+}
+
+func (pcap *Pcap) GetPkts() <-chan *sources.Packet {
 	go pcap.onceStart.Do(func() {
-		defer pcap.Close()
-		for pkt := range pcap.pcapPackets {
-			defer pcap.Close()
-			ethLayer := pkt.Layer(layers.LayerTypeEthernet)
-			if ethLayer == nil {
-				continue
-			}
-
-			eth := ethLayer.(*layers.Ethernet)
-			if eth.SrcMAC.String() == pcap.macNetDev.String() {
-				continue
-			}
-
-			if eth.EthernetType != layers.EthernetType(EthernetOltType) || !sources.IsOltPacket(eth.Payload) {
-				continue
-			}
-
-			if sources.IsOltPacket(eth.Payload) {
-				pkt, err := sources.Parse(eth.Payload)
-				if pcap.returnPkts == nil {
-					return
-				}
-				pcap.returnPkts <- &sources.PacketRaw{
-					Error: err,
-					Pkt:   pkt,
-					Mac:   sources.HardwareAddr(eth.SrcMAC),
-				}
-			}
+		for workderID := range runtime.NumCPU() {
+			go pcap.processResponses(workderID)
 		}
 	})
-
 	return pcap.returnPkts
 }
 
-func (pcap *Pcap) SendPkt(pkt *sources.PacketRaw) error {
-	data, err := pkt.Pkt.MarshalBinary()
-	if err != nil {
-		return err
+func (pcap *Pcap) assignerPkt(raw *sources.Packet) {
+	pcap.reqLock.Lock()
+	defer pcap.reqLock.Unlock()
+	pcap.CorrentRequest++
+	pcap.log.Debug("assigner pkt ID", "id", pcap.CorrentRequest)
+	raw.RequestID = pcap.CorrentRequest
+}
+
+func (pcap *Pcap) sendPkt(pkt *sources.Packet) error {
+	if pkt.Mac.String() == (&sources.HardwareAddr{}).String() {
+		return sources.ErrNotValid
+	}
+	if pkt.RequestID == sources.LimitForU16 {
+		pcap.log.Debug("reset callbacks")
+		pcap.fnCallbacks.CheckClear(func(key uint16, value sources.ASyncFn) bool {
+			if key == pkt.RequestID {
+				return false
+			}
+			value(&sources.Packet{Error: sources.ErrTimeout})
+			return true
+		})
 	}
 
-	eth := &layers.Ethernet{
+	pcap.log.Debug("sending pkt", "destination", pkt.Mac, "requestID", pkt.RequestID, "data", pkt.Encode())
+	buffer := gopacket.NewSerializeBuffer()
+	gopacket.SerializeLayers(buffer, optsSerealize, &layers.Ethernet{
 		SrcMAC:       pcap.macNetDev.Net(),
 		DstMAC:       pkt.Mac.Net(),
 		EthernetType: layers.EthernetType(EthernetOltType),
+	}, gopacket.Payload(pkt.Encode()))
+	return pcap.pcapHandle.WritePacketData(buffer.Bytes())
+}
+
+func (pcap *Pcap) AsyncSend(pkt *sources.Packet, fn sources.ASyncFn) {
+	if fn == nil {
+		panic("require function")
+	}
+	pcap.assignerPkt(pkt)
+	pcap.fnCallbacks.Set(pkt.RequestID, fn)
+	pcap.sendPkt(pkt)
+}
+
+func (pcap *Pcap) Send(pkt *sources.Packet, timeout ...time.Duration) (*sources.Packet, error) {
+	pcap.assignerPkt(pkt)
+	if len(timeout) > 0 {
+		timeup := timeout[0]
+
+		back := make(chan *sources.Packet, 1)
+		defer close(back)
+		pcap.fnCallbacks.Set(pkt.RequestID, func(pkt *sources.Packet) bool {
+			back <- pkt
+			return true
+		})
+		pcap.sendPkt(pkt)
+
+		select {
+		case pkt := <-back:
+			return pkt, nil
+		case <-time.After(timeup):
+		}
+
+		return nil, sources.ErrTimeout
 	}
 
-	buffer := gopacket.NewSerializeBuffer()
-	gopacket.SerializeLayers(buffer, optsSerealize, eth, gopacket.Payload(data))
-	return pcap.pcapHandle.WritePacketData(buffer.Bytes())
+	// Send packet
+	return nil, pcap.sendPkt(pkt)
 }

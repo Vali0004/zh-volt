@@ -1,19 +1,14 @@
-package zhvolt
+package olt
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"sirherobrine23.com.br/Sirherobrine23/zh-volt/sources"
 	"sirherobrine23.com.br/Sirherobrine23/zh-volt/util"
@@ -22,6 +17,8 @@ import (
 const (
 	defaultLogFlag = log.Ldate | log.Ltime | log.LUTC | log.Lmsgprefix
 	u16Limit       = ^uint16(0)
+
+	MaxONU uint8 = 128
 )
 
 var (
@@ -30,7 +27,7 @@ var (
 	ErrCallbackTimeout = errors.New("timeout on callback call")
 )
 
-type oltManegerCallback func(pkt *sources.PacketRaw, olt *Olt, remove func())
+type oltManegerCallback func(pkt *sources.PacketRaw, olt *Olt, removeReqID func())
 
 type OltManeger struct {
 	CorrentRequest uint16
@@ -41,6 +38,7 @@ type OltManeger struct {
 	pktSource sources.Sources
 	newDev    chan struct{}
 
+	reqLock     *sync.Mutex
 	oltCallback map[uint16]oltManegerCallback
 	olt         *util.SyncMap[string, *Olt]
 	onceStart   *sync.Once
@@ -57,6 +55,7 @@ func NewOltProcess(ctx context.Context, source sources.Sources, logWrite io.Writ
 		olt:            util.NewSyncMap[string, *Olt](),
 		onceStart:      &sync.Once{},
 		oltCallback:    map[uint16]oltManegerCallback{},
+		reqLock:        &sync.Mutex{},
 	}
 
 	return oltManeger, nil
@@ -99,21 +98,15 @@ func (man *OltManeger) Wait(timeout time.Duration) bool {
 }
 
 func (man *OltManeger) assignerRequestID(raw *sources.PacketRaw) (overflow bool) {
+	man.reqLock.Lock()
+	defer man.reqLock.Unlock()
+
 	if u16Limit == man.CorrentRequest {
 		overflow = true
 	}
 	man.CorrentRequest++
 	raw.Pkt.RequestID = man.CorrentRequest
 	return
-}
-
-func (man *OltManeger) sendPacket(raw *sources.PacketRaw) error {
-	if man.assignerRequestID(raw) {
-		for id := range man.oltCallback {
-			delete(man.oltCallback, id)
-		}
-	}
-	return man.pktSource.SendPkt(raw)
 }
 
 func (man *OltManeger) sendPacketCallback(raw *sources.PacketRaw, call oltManegerCallback) error {
@@ -123,28 +116,10 @@ func (man *OltManeger) sendPacketCallback(raw *sources.PacketRaw, call oltManege
 		}
 	}
 	man.oltCallback[raw.Pkt.RequestID] = call
+	if man.Verbose > 3 {
+		man.Log.Printf("Seding to %s, reqID %d", raw.Mac, raw.Pkt.RequestID)
+	}
 	return man.pktSource.SendPkt(raw)
-}
-
-func (man *OltManeger) sendPacketWait(raw *sources.PacketRaw, timeout time.Duration) (*sources.PacketRaw, error) {
-	back := make(chan *sources.PacketRaw, 1)
-	defer close(back)
-
-	err := man.sendPacketCallback(raw, func(pkt *sources.PacketRaw, olt *Olt, remove func()) {
-		defer remove()
-		back <- pkt
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	select {
-	case pkt := <-back:
-		return pkt, nil
-	case <-time.After(timeout):
-		return nil, ErrCallbackTimeout
-	}
 }
 
 func (man *OltManeger) processPacket(workerID int) {
@@ -156,6 +131,13 @@ func (man *OltManeger) processPacket(workerID int) {
 				man.Log.Printf("Worker %d: Pkt %s, Error %s", workerID, pkt.Mac, pkt.Error)
 			} else {
 				man.Log.Printf("Worker %d: Pkt %s, requestID %d", workerID, pkt.Mac, pkt.Pkt.RequestID)
+			}
+		}
+
+		if pkt.Pkt.RequestID == u16Limit && len(man.oltCallback) > 0 {
+			man.Log.Printf("Cleaning olt callbacks (%d)", len(man.oltCallback))
+			for id := range man.oltCallback {
+				delete(man.oltCallback, id)
 			}
 		}
 
@@ -203,107 +185,7 @@ func (man *OltManeger) Start() {
 				Flag2:       0xff,
 			},
 		}, func(pkt *sources.PacketRaw, olt *Olt, _ func()) {
-			var err error
-			olt.FirmwareVersion = strings.TrimFunc(string(pkt.Pkt.Data), func(r rune) bool {
-				return unicode.IsSpace(r) || r == 0x0
-			})
-
-			// Get max ONUs
-			pkt, err = man.sendPacketWait(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag0: 0x01, Flag1: 0x18, Flag2: 0xff}}, time.Second)
-			if err != nil {
-				olt.Log.Printf("error on get max ONUs: %s", err)
-				return
-			}
-			olt.MaxONU = pkt.Pkt.Data[0]
-			olt.Log.Printf("Max ONUs: %d", olt.MaxONU)
-
-			// Get OLT DNA
-			pkt, err = man.sendPacketWait(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag1: 0x08, Flag2: 0xff}}, time.Second)
-			if err != nil {
-				olt.Log.Printf("error on get OLT DNA: %s", err)
-				return
-			}
-			olt.DNA = hex.EncodeToString(pkt.Pkt.Data[:bytes.IndexByte(pkt.Pkt.Data, 0x0)])
-			olt.Log.Printf("OLT DNA: %s", olt.DNA)
-
-			// Get uptime
-			pkt, err = man.sendPacketWait(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag1: 0x01, Flag2: 0xff}}, time.Second)
-			if err != nil {
-				olt.Log.Printf("error on get OLT uptime: %s", err)
-				return
-			}
-			now := time.Duration(binary.BigEndian.Uint64(pkt.Pkt.Data)) * 16
-			olt.Up = time.UnixMicro(time.Now().UnixMicro()).Add(-now)
-			olt.Log.Printf("OLT Up time %s (%s)", olt.Up.Format(time.RFC3339), now)
-
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag0: 0x01, Flag2: 0xff}})
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag1: 0x05, Flag2: 0xff}})
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag1: 0x06, Flag2: 0xff}})
-
-			// Get current ONUs connected
-			pkt, err = man.sendPacketWait(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag0: 0x02, Flag2: 0xff}}, time.Second)
-			if err != nil {
-				olt.Log.Printf("error on get ONUs connected: %s", err)
-				return
-			}
-			olt.OnlineONU = uint8(pkt.Pkt.Data[0])
-			olt.Log.Printf("Current ONU online: %d", olt.OnlineONU)
-
-			// Get current OMCI Mode
-			pkt, err = man.sendPacketWait(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag0: 0x01, Flag1: 0x19, Flag2: 0xff}}, time.Second)
-			if err != nil {
-				olt.Log.Printf("error on get OMCI Mode: %s", err)
-				return
-			}
-			olt.OMCIMode = int(byte(pkt.Pkt.Data[0]))
-			olt.Log.Printf("OMCI Mode %d", olt.OMCIMode)
-
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag1: 0x02, Flag2: 0xff}})
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag1: 0x07, Flag2: 0xff}})
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag0: 0x01, Flag1: 0x0b, Flag2: 0xff}})
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag0: 0x01, Flag1: 0x0c, Flag2: 0xff}})
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag0: 0x01, Flag1: 0x0d, Flag2: 0xff}})
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag0: 0x01, Flag1: 0x09, Flag2: 0xff}})
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag0: 0x01, Flag1: 0x05, Flag2: 0xff}})
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag0: 0x01, Flag1: 0x07, Flag2: 0xff}})
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag0: 0x01, Flag1: 0x0a, Flag2: 0xff}})
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag0: 0x01, Flag1: 0x06, Flag2: 0xff}})
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag0: 0x01, Flag1: 0x08, Flag2: 0xff}})
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag0: 0x01, Flag2: 0xff}})
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag0: 0x01, Flag1: 0x11, Flag2: 0xff}})
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag0: 0x01, Flag1: 0x12, Flag2: 0xff}})
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag0: 0x01, Flag1: 0x13, Flag2: 0xff}})
-
-			// ??
-			pkt, err = man.sendPacketWait(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag0: 0x02, Flag1: 0x01, Flag2: 0x00}}, time.Second)
-			if err != nil {
-				olt.Log.Printf("??: %s", err)
-				return
-			}
-
-			// OLT Config
-			pkt, err = man.sendPacketWait(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000f, Flag1: 0x09, Flag2: 0xff}}, time.Second)
-			if err != nil {
-				olt.Log.Printf("OLT Config error: %s", err)
-				return
-			}
-			olt.Log.Printf("OLT Config %s", hex.EncodeToString(pkt.Pkt.Data))
-
-			man.sendPacket(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag1: 0x10, Flag2: 0xff}})
-			man.sendPacketWait(&sources.PacketRaw{Mac: pkt.Mac, Pkt: &sources.Packet{RequestType: 0x000c, Flag1: 0x03, Flag2: 0xff}}, time.Second)
-
-			go olt.OltInfo()
-			olt.OnuUpdate()
+			olt.startPkt(pkt)
 		})
 	})
 }
-
-// Send: Type: 0x0014, Status 0x02, Flag0: 0x01, Flag1: 0x0d, Flag2: 0xff, Data = data
-// func (man *OltManeger) SetAuthLoid(data string) error {
-	
-// }
-
-// Send: Type: 0x0014, Status 0x02, Flag0: 0x01, Flag1: 0x0c, Flag2: 0xff, Data = data
-// func (man *OltManeger) SetAuthPass(data string) error {
-	
-// }

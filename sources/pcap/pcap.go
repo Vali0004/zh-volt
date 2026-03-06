@@ -14,7 +14,7 @@ import (
 
 const (
 	EthernetOltType = 0x88b6
-	Timeout         = time.Microsecond * 5
+	Timeout         = time.Nanosecond * 400
 )
 
 var (

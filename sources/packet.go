@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -47,7 +46,7 @@ type Packet struct {
 	Flag0       uint8  `json:"flag0"`
 	Flag1       uint8  `json:"flag1"`
 	Flag2       uint8  `json:"flag2"`
-	Flag3       uint8  `json:"flag3"`
+	Flag3       uint8  `json:"flag3"` // Old `Status` flag
 
 	Header []byte `json:"-"`
 	Data   []byte `json:"data"`
@@ -99,7 +98,7 @@ func (pkt Packet) MarshalBinary() ([]byte, error) {
 }
 
 func (pkt Packet) String() string {
-	return fmt.Sprintf("Request %d - Type 0x%x (0x%x), Status 0x%x (%s)", pkt.RequestID, pkt.RequestType, pkt.Id(), pkt.Flag3, hex.EncodeToString(pkt.Header))
+	return fmt.Sprintf("flag0: %02x, flag1: %02x, flag2: %02x, flag3: %02x", pkt.Flag0, pkt.Flag1, pkt.Flag2, pkt.Flag3)
 }
 
 func (pkt Packet) Id() int {

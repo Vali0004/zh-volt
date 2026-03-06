@@ -3,7 +3,7 @@ package gponsn_test
 import (
 	"testing"
 
-	"sirherobrine23.com.br/Sirherobrine23/zh-volt/zhvolt/gponsn"
+	"sirherobrine23.com.br/Sirherobrine23/zh-volt/gponsn"
 )
 
 var GPONs = []struct {

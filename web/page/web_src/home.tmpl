@@ -1,0 +1,5 @@
+<div>
+  {{ range $key, $value := . }}
+    {{ template "olt.tmpl" $value }}
+  {{ end }}
+</div>

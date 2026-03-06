@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -14,6 +13,7 @@ import (
 
 	zhvolt "sirherobrine23.com.br/Sirherobrine23/zh-volt/olt"
 	"sirherobrine23.com.br/Sirherobrine23/zh-volt/sources/pcap"
+	"sirherobrine23.com.br/Sirherobrine23/zh-volt/web"
 
 	"github.com/urfave/cli/v3"
 )
@@ -100,18 +100,7 @@ var app = &cli.Command{
 					fmt.Fprintf(os.Stderr, "HTTP Listened on http://%s\n", tcp.Addr())
 					defer tcp.Close()
 
-					go http.Serve(tcp, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						data := olts.Olts()
-						w.Header().Set("Content-Type", "application/json; utf-8")
-						js := json.NewEncoder(w)
-						js.SetIndent("", "  ")
-						if err = js.Encode(data); err != nil {
-							olts.Log.Printf("error on encode olt: %s\n", err)
-							w.Header().Set("Content-Type", "text/plain; utf-8")
-							w.WriteHeader(500)
-							fmt.Fprintf(w, "error on encode olt data: %s\n\n", err)
-						}
-					}))
+					go http.Serve(tcp, web.NewWeb(olts))
 				}
 
 				defer olts.Close()

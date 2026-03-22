@@ -329,6 +329,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
+name = "scanf"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c85223942fb132c9367378fc82b287e26384c7ba898377af05c50a2aa3c412dc"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -458,6 +469,7 @@ dependencies = [
  "hex",
  "macaddr",
  "pnet",
+ "scanf",
  "serde",
  "serde_json",
  "tiny_http",

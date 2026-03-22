@@ -1,0 +1,24 @@
+#!/bin/sh
+
+case "$1" in
+	list)
+		echo '{"status": {}}'
+		;;
+	call)
+		case "$2" in
+			status)
+				SOCKET=$(uci -q get zh-volt.main.listen)
+				if [ -z "$SOCKET" ]; then
+					SOCKET="/var/run/zh-volt.sock"
+				fi
+				SOCKET=$(echo "$SOCKET" | sed 's/^unix://')
+				json=$(echo "1" | socat -t 2 - UNIX-CONNECT:"$SOCKET" 2>/dev/null)
+				if [ -n "$json" ]; then
+					echo "{ \"data\": $json }"
+				else
+					echo '{ "data": [] }'
+				fi
+				;;
+		esac
+		;;
+esac

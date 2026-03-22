@@ -14,6 +14,18 @@ pub fn new_share() -> SharedOltState {
 	Arc::new(RwLock::new(HashMap::new()))
 }
 
+pub fn get_olts_vec(olts: SharedOltState) -> Result<Vec<Olt>, ErrPcap> {
+	let mut data: Vec<Olt> = vec![];
+	for (_, p) in olts.read().unwrap().iter() {
+		{
+			let olt = p.try_lock().map_err(|_| ErrPcap::LockError)?;
+			data.push(olt.clone());
+		}
+	}
+
+	Ok(data)
+}
+
 pub fn new_pcap_dev(net_dev: String) -> Result<PcapShare, ErrPcap> {
 	let dev = match Pcap::new(net_dev) {
 		Err(err) => panic!("Error starting Pcap: {:?}", err),

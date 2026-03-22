@@ -1,3 +1,0 @@
-config zh-volt 'main'
-	option netdev 'sfp'
-	option http_listen '0.0.0.0:8081'

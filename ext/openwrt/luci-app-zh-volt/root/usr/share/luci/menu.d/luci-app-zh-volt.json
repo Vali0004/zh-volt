@@ -1,9 +1,26 @@
 {
-	"admin/services/zh_volt": {
-		"title": "ZH-Volt",
+	"admin/services/zh-volt": {
+		"title": "ZH-Volt OLT",
+		"action": {
+			"type": "alias",
+			"path": "admin/services/zh-volt/status"
+		},
+		"order": 90
+	},
+	"admin/services/zh-volt/status": {
+		"title": "Status",
 		"action": {
 			"type": "view",
 			"path": "zh_volt/status"
-		}
+		},
+		"order": 1
+	},
+	"admin/services/zh-volt/config": {
+		"title": "Settings",
+		"action": {
+			"type": "view",
+			"path": "zh_volt/config"
+		},
+		"order": 2
 	}
 }

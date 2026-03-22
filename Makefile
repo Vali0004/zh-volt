@@ -13,4 +13,4 @@ clean:
 	rm -f ./target
 
 run: build
-	sudo RUST_BACKTRACE=1 ./target/debug/zh_volt -i $(NETDEV)
+	sudo RUST_BACKTRACE=1 ./target/debug/zh_volt -i $(NETDEV) -l unix:/tmp/test_zh_volt.sock

@@ -402,7 +402,8 @@ impl Olt {
 				Err(_) => continue,
 				Ok(res) => {
 					let mut olt = olt_arc.lock().unwrap();
-					olt.temperature = ((BigEndian::read_u16(&res.data[..2]) as f64) / 100.0) * 2.0;
+					let temp = u16::from_be_bytes([res.data[0], res.data[1]]);
+					olt.temperature = ((((temp as f64) / 100.0) * 2.1) * 100.0).round() / 100.0;
 				}
 			}
 
@@ -411,7 +412,8 @@ impl Olt {
 				Err(_) => continue,
 				Ok(res) => {
 					let mut olt = olt_arc.lock().unwrap();
-					olt.max_temperature = ((BigEndian::read_u16(&res.data[..2]) as f64) / 100.0) * 2.0;
+					let temp = u16::from_be_bytes([res.data[0], res.data[1]]);
+					olt.max_temperature = ((((temp as f64) / 100.0) * 2.1) * 100.0).round() / 100.0;
 				}
 			}
 

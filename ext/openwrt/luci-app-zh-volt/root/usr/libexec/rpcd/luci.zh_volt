@@ -18,7 +18,7 @@ case "$1" in
 					SOCKET="/var/run/zh-volt.sock"
 				fi
 				# SOCKET=$(echo "$SOCKET" | sed 's/^unix://')
-				json=$(zh_volt maneger -c "$SOCKET" status -o json 2>/dev/null)
+				json=$(zh_volt manager -c "$SOCKET" status -o json 2>/dev/null)
 				if [ -n "$json" ]; then
 					echo "{\"data\": $json}"
 				else

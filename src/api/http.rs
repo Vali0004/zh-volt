@@ -1,6 +1,6 @@
 use std::{path::PathBuf, str::FromStr};
 
-use crate::olt::olt_maneger::{SharedOltState, get_olts_vec};
+use crate::olt::olt_manager::{SharedOltState, get_olts_vec};
 use rust_embed::Embed;
 use serde_json::to_string_pretty;
 use tiny_http::{Header, Response, Server};

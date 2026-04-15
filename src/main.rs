@@ -6,8 +6,8 @@ use std::process::ExitCode;
 
 use argh::FromArgs;
 
-use crate::api::{ErrorListen, StatusOutputType, bootapi, unix};
-use crate::olt::olt_maneger::{OltManager, new_pcap_dev, new_share};
+use crate::api::{ErrorListen, StatusOutputType, bootapi};
+use crate::olt::olt_manager::{OltManager, new_pcap_dev, new_share};
 use crate::olt::pcap::ErrPcap;
 
 #[derive(FromArgs, PartialEq, Debug)]
@@ -43,7 +43,7 @@ enum ManegerSubCommands {
 }
 
 #[derive(FromArgs, PartialEq, Debug)]
-#[argh(subcommand, name = "maneger")]
+#[argh(subcommand, name = "manager")]
 /// Interact with the daemon
 struct Manager {
 	#[argh(option, short = 'c')]
@@ -66,6 +66,16 @@ enum SubCommands {
 struct ZhVolt {
 	#[argh(subcommand)]
 	nested: SubCommands,
+}
+
+#[cfg(unix)]
+fn run_client_status(conn: String, watch: bool, output: StatusOutputType) {
+	let _ = crate::api::unix::client_status(conn, watch, output);
+}
+
+#[cfg(windows)]
+fn run_client_status(conn: String, watch: bool, output: StatusOutputType) {
+	let _ = crate::api::windows::client_status(conn, watch, output);
 }
 
 fn main() -> ExitCode {
@@ -125,7 +135,7 @@ fn main() -> ExitCode {
 					let output = config.output.unwrap_or(StatusOutputType::Json);
 
 					if connection_str.starts_with("unix:") || connection_str.ends_with(".sock") {
-						let _ = unix::client_status(connection_str, watch, output);
+						let _ = run_client_status(connection_str, watch, output);
 					}
 				}
 			}

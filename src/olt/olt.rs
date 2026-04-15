@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
 
-use crate::olt::olt_maneger::PcapShare;
+use crate::olt::olt_manager::PcapShare;
 use crate::olt::packets::{self, Packet};
 use crate::sn::gpon_sn::{self, Sn};
 
@@ -402,8 +402,7 @@ impl Olt {
 				Err(_) => continue,
 				Ok(res) => {
 					let mut olt = olt_arc.lock().unwrap();
-					let temp = u16::from_be_bytes([res.data[0], res.data[1]]);
-					olt.temperature = ((((temp as f64) / 100.0) * 2.1) * 100.0).round() / 100.0;
+					olt.temperature = ((BigEndian::read_u16(&res.data[..2]) as f64) / 100.0) * 2.0;
 				}
 			}
 
@@ -412,8 +411,7 @@ impl Olt {
 				Err(_) => continue,
 				Ok(res) => {
 					let mut olt = olt_arc.lock().unwrap();
-					let temp = u16::from_be_bytes([res.data[0], res.data[1]]);
-					olt.max_temperature = ((((temp as f64) / 100.0) * 2.1) * 100.0).round() / 100.0;
+					olt.max_temperature = ((BigEndian::read_u16(&res.data[..2]) as f64) / 100.0) * 2.0;
 				}
 			}
 

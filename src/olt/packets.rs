@@ -5,7 +5,7 @@ use hex;
 use macaddr;
 use serde::{Deserialize, Serialize};
 
-use crate::olt::{olt_maneger::PcapShare, pcap::ErrPcap};
+use crate::olt::{olt_manager::PcapShare, pcap::ErrPcap};
 
 pub const OLT_MAGIC: [u8; 4] = [0xb9, 0x58, 0xd6, 0x3a];
 pub const BROADCAST_MAC: macaddr::MacAddr6 = macaddr::MacAddr6::broadcast();
